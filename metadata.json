@@ -1,0 +1,6 @@
+{
+  "name": "VORTA AI — پلتفرم جامع هوش مصنوعی ورتا",
+  "description": "پلتفرم یکپارچه دسترسی به مدلهای هوش مصنوعی، استودیوی تولید تصویر و ویدیو، ایجنتهای هوشمند، اتوماسیون وظایف و API توسعهدهندگان.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,529 @@
+// VORTA AI — Production PostgreSQL Schema (Prisma ORM)
+// Covers Phase 1–3 relational architecture with foreign keys, indexes, and auditability.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum FeatureAvailability {
+  FUNCTIONAL
+  DEMO
+  COMING_SOON
+}
+
+enum LedgerEntryType {
+  CREDIT_PURCHASE
+  CREDIT_GIFT
+  USAGE_RESERVE
+  USAGE_CAPTURE
+  USAGE_REFUND
+  EXPIRED
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  PAUSED
+  AWAITING_APPROVAL
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  phone         String?   @unique
+  name          String
+  passwordHash  String
+  role          UserRole  @default(USER)
+  preferredLang String    @default("fa")
+  preferredTheme String   @default("dark")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions      Session[]
+  memberships   OrganizationMember[]
+  workspaces    Workspace[]
+  conversations Conversation[]
+  files         FileObject[]
+  mediaAssets   MediaAsset[]
+  generationJobs GenerationJob[]
+  agents        Agent[]
+  automations   Automation[]
+  apiKeys       APIKey[]
+  subscriptions Subscription[]
+  wallet        Wallet?
+  transactions  Transaction[]
+  payments      Payment[]
+  usageRecords  UsageRecord[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  tickets       SupportTicket[]
+
+  @@index([email])
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique
+  deviceName String
+  ipAddress  String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  billingEmail String?
+  monthlyCapCredits Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members    OrganizationMember[]
+  workspaces Workspace[]
+}
+
+model OrganizationMember {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           OrgRole  @default(MEMBER)
+  quotaCredits   Int?
+  usedCredits    Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+model Workspace {
+  id             String   @id @default(cuid())
+  name           String
+  ownerId        String
+  organizationId String?
+  createdAt      DateTime @default(now())
+
+  owner        User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  projects     Project[]
+
+  @@index([ownerId])
+  @@index([organizationId])
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace     Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  files         FileObject[]
+  mediaAssets   MediaAsset[]
+  usageRecords  UsageRecord[]
+
+  @@index([workspaceId])
+}
+
+model Conversation {
+  id        String   @id @default(cuid())
+  userId    String
+  projectId String?
+  title     String
+  folder    String   @default("عمومی")
+  modelId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project  Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  messages Message[]
+
+  @@index([userId, updatedAt])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  role           String
+  content        String
+  modelId        String?
+  inputTokens    Int      @default(0)
+  outputTokens   Int      @default(0)
+  costCredits    Float    @default(0)
+  attachments    Json?
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}
+
+model FileObject {
+  id         String   @id @default(cuid())
+  userId     String
+  projectId  String?
+  filename   String
+  mimeType   String
+  sizeBytes  Int
+  storageKey String   @unique
+  createdAt  DateTime @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+}
+
+model MediaAsset {
+  id         String   @id @default(cuid())
+  userId     String
+  projectId  String?
+  type       String   // image | video | audio
+  title      String
+  prompt     String
+  modelId    String
+  url        String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([userId, type])
+}
+
+model Provider {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  isEnabled Boolean  @default(true)
+  baseUrl   String?
+  status    FeatureAvailability @default(DEMO)
+  models    AIModel[]
+}
+
+model AIModel {
+  id                 String   @id
+  providerId         String
+  displayName        String
+  version            String
+  modalities         String[]
+  features           String[]
+  contextWindow      Int
+  maxOutputTokens    Int
+  inputPricePer1K    Float
+  outputPricePer1K   Float
+  availability       FeatureAvailability @default(DEMO)
+  updatedAt          DateTime @updatedAt
+
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@index([providerId, availability])
+}
+
+model GenerationJob {
+  id             String    @id @default(cuid())
+  userId         String
+  modality       String    // image | video | audio
+  modelId        String
+  prompt         String
+  params         Json?
+  status         JobStatus @default(QUEUED)
+  progressPct    Int       @default(0)
+  estimatedCost  Float     @default(0)
+  resultAssetId  String?
+  errorMessage   String?
+  idempotencyKey String    @unique
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+}
+
+model Agent {
+  id           String   @id @default(cuid())
+  userId       String
+  name         String
+  goal         String
+  instructions String
+  modelId      String
+  allowedTools String[]
+  dataSources  String[]
+  maxCostCredits Float  @default(500)
+  requireApproval Boolean @default(true)
+  createdAt    DateTime @default(now())
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  runs        AgentRun[]
+  automations Automation[]
+
+  @@index([userId])
+}
+
+model AgentRun {
+  id              String    @id @default(cuid())
+  agentId         String
+  status          JobStatus @default(QUEUED)
+  startedAt       DateTime  @default(now())
+  finishedAt      DateTime?
+  costCredits     Float     @default(0)
+  finalReport     String?
+  errorMessage    String?
+  pendingAction   String?
+
+  agent Agent       @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  steps AgentStep[]
+
+  @@index([agentId, startedAt])
+}
+
+model AgentStep {
+  id          String   @id @default(cuid())
+  runId       String
+  stepIndex   Int
+  title       String
+  detail      String
+  status      String
+  snapshotUrl String?
+  createdAt   DateTime @default(now())
+
+  run AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, stepIndex])
+}
+
+model Automation {
+  id               String   @id @default(cuid())
+  userId           String
+  agentId          String
+  name             String
+  description      String
+  scheduleTime     String
+  timezone         String   @default("Asia/Tehran")
+  frequency        String   // daily | weekly | monthly
+  targetUrls       String[]
+  maxCostCredits   Float
+  notifyChannel    String   @default("in_app")
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+
+  user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agent Agent           @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  runs  AutomationRun[]
+
+  @@index([userId, isActive])
+}
+
+model AutomationRun {
+  id           String    @id @default(cuid())
+  automationId String
+  status       JobStatus @default(QUEUED)
+  startedAt    DateTime  @default(now())
+  finishedAt   DateTime?
+  costCredits  Float     @default(0)
+  summary      String?
+
+  automation Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
+  @@index([automationId, startedAt])
+}
+
+model APIKey {
+  id             String    @id @default(cuid())
+  userId         String
+  name           String
+  keyPrefix      String
+  keyHash        String    @unique
+  rateLimitRpm   Int       @default(60)
+  monthlyCapCredits Float?
+  usedCredits    Float     @default(0)
+  revokedAt      DateTime?
+  lastUsedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Plan {
+  id               String  @id
+  name             String
+  subtitle         String
+  monthlyPriceToman Int?
+  includedCredits  Int
+  features         Json
+  isEnterprise     Boolean @default(false)
+  subscriptions    Subscription[]
+}
+
+model Subscription {
+  id           String   @id @default(cuid())
+  userId       String
+  planId       String
+  billingCycle String   // monthly | quarterly | semiannual | annual
+  status       String   // active | cancelled | expired
+  renewsAt     DateTime
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan Plan @relation(fields: [planId], references: [id])
+
+  @@index([userId, status])
+}
+
+model Wallet {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  purchasedCredits Float    @default(0)
+  giftCredits      Float    @default(0)
+  lowBalanceAlert  Float    @default(100)
+  updatedAt        DateTime @updatedAt
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ledgerEntries CreditLedger[]
+}
+
+model CreditLedger {
+  id             String          @id @default(cuid())
+  walletId       String
+  type           LedgerEntryType
+  amount         Float
+  bucket         String          // purchased | gift
+  expiresAt      DateTime?
+  idempotencyKey String          @unique
+  referenceId    String?
+  description    String
+  createdAt      DateTime        @default(now())
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId, createdAt])
+}
+
+model Transaction {
+  id          String   @id @default(cuid())
+  userId      String
+  amountToman Int
+  credits     Float
+  status      String
+  description String
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model Payment {
+  id            String   @id @default(cuid())
+  userId        String
+  gateway       String   // zarinpal | sandbox
+  authority     String   @unique
+  amountToman   Int
+  status        String   // pending | verified | failed
+  isSandbox     Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model UsageRecord {
+  id           String   @id @default(cuid())
+  userId       String
+  projectId    String?
+  modelId      String
+  modality     String
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  costCredits  Float
+  costToman    Int
+  latencyMs    Int
+  status       String
+  createdAt    DateTime @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([modelId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  body      String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  target    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+}
+
+model SupportTicket {
+  id        String   @id @default(cuid())
+  userId    String
+  subject   String
+  message   String
+  status    String   @default("open")
+  priority  String   @default("normal")
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+}
